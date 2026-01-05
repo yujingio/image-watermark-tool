@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>圖片浮水印工具 (Client-side)</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --bg: #f8fafc;
+            --surface: #ffffff;
+            --border: #e2e8f0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg);
+            color: #334155;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            max-width: 1000px;
+            width: 100%;
+            background: var(--surface);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+
+        h1 { margin-top: 0; text-align: center; color: #1e293b; }
+
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+            padding: 20px;
+            background: #f1f5f9;
+            border-radius: 8px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label { font-weight: 600; font-size: 0.9rem; }
+        
+        input[type="file"] {
+            padding: 8px;
+            background: white;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+        }
+
+        input[type="range"] { width: 100%; cursor: pointer; }
+
+        .canvas-container {
+            width: 100%;
+            overflow: auto;
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #eee;
+            min-height: 300px;
+            position: relative;
+        }
+
+        canvas {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            background: url('data:image/svg+xml;utf8,<svg width="20" height="20" xmlns="http://www.w3.org/2000/svg"><rect x="0" y="0" width="10" height="10" fill="%23ddd"/><rect x="10" y="10" width="10" height="10" fill="%23ddd"/></svg>');
+        }
+
+        .btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            margin-top: 20px;
+            display: block;
+            width: 100%;
+            text-align: center;
+            text-decoration: none;
+        }
+
+        .btn:hover { opacity: 0.9; }
+        .btn:disabled { background-color: #94a3b8; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>圖片浮水印工具</h1>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>1. 上傳底圖 (主圖片)</label>
+            <input type="file" id="mainImageInput" accept="image/*">
+        </div>
+        <div class="control-group">
+            <label>2. 上傳浮水印 (Logo/圖片)</label>
+            <input type="file" id="watermarkInput" accept="image/*">
+        </div>
+
+        <div class="control-group">
+            <label>浮水印大小 (縮放): <span id="scaleVal">30%</span></label>
+            <input type="range" id="scale" min="1" max="100" value="30">
+        </div>
+        <div class="control-group">
+            <label>透明度: <span id="opacityVal">0.8</span></label>
+            <input type="range" id="opacity" min="0" max="1" step="0.1" value="0.8">
+        </div>
+        <div class="control-group">
+            <label>水平位置 (X):</label>
+            <input type="range" id="posX" min="0" max="100" value="95">
+        </div>
+        <div class="control-group">
+            <label>垂直位置 (Y):</label>
+            <input type="range" id="posY" min="0" max="100" value="95">
+        </div>
+    </div>
+
+    <div class="canvas-container">
+        <canvas id="canvas"></canvas>
+        <p id="placeholder-text" style="position:absolute; color:#888;">請先上傳圖片以開始製作</p>
+    </div>
+
+    <a id="downloadBtn" class="btn" style="display:none;">下載合成圖片</a>
+</div>
+
+<script>
+    const mainInput = document.getElementById('mainImageInput');
+    const watermarkInput = document.getElementById('watermarkInput');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const placeholderText = document.getElementById('placeholder-text');
+
+    // 狀態變數
+    let mainImg = new Image();
+    let watermarkImg = new Image();
+    let isMainLoaded = false;
+    let isWatermarkLoaded = false;
+
+    // 控制項 DOM
+    const controls = {
+        scale: document.getElementById('scale'),
+        opacity: document.getElementById('opacity'),
+        posX: document.getElementById('posX'),
+        posY: document.getElementById('posY')
+    };
+
+    // 監聽主圖片上傳
+    mainInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            mainImg.onload = () => {
+                canvas.width = mainImg.width;
+                canvas.height = mainImg.height;
+                isMainLoaded = true;
+                placeholderText.style.display = 'none';
+                draw();
+            };
+            mainImg.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    // 監聽浮水印上傳
+    watermarkInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            watermarkImg.onload = () => {
+                isWatermarkLoaded = true;
+                draw();
+            };
+            watermarkImg.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    // 監聽所有滑桿變動
+    Object.values(controls).forEach(input => {
+        input.addEventListener('input', draw);
+    });
+
+    // 繪圖核心邏輯
+    function draw() {
+        if (!isMainLoaded) return;
+
+        // 1. 清空畫布
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 2. 繪製主圖
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(mainImg, 0, 0);
+
+        // 3. 繪製浮水印 (如果有)
+        if (isWatermarkLoaded) {
+            // 更新數值顯示
+            document.getElementById('scaleVal').textContent = controls.scale.value + '%';
+            document.getElementById('opacityVal').textContent = controls.opacity.value;
+
+            const scale = parseInt(controls.scale.value) / 100;
+            const opacity = parseFloat(controls.opacity.value);
+            
+            // 計算浮水印的新尺寸 (以主圖寬度的比例為基準，保持浮水印原始長寬比)
+            // 這裡的邏輯：scale 為 100% 時，浮水印寬度 = 主圖寬度的 50% (避免太大)
+            // 你可以根據需求調整這個基準
+            const baseRatio = 0.5; 
+            const wmWidth = mainImg.width * baseRatio * scale;
+            const wmHeight = (watermarkImg.height / watermarkImg.width) * wmWidth;
+
+            // 計算位置 (百分比轉像素)
+            // posX=100% 代表貼齊右邊，0% 代表貼齊左邊
+            const maxPosX = canvas.width - wmWidth;
+            const maxPosY = canvas.height - wmHeight;
+            
+            const x = (parseInt(controls.posX.value) / 100) * maxPosX;
+            const y = (parseInt(controls.posY.value) / 100) * maxPosY;
+
+            ctx.globalAlpha = opacity;
+            ctx.drawImage(watermarkImg, x, y, wmWidth, wmHeight);
+        }
+
+        // 4. 更新下載按鈕
+        downloadBtn.style.display = 'block';
+        downloadBtn.href = canvas.toDataURL('image/png');
+        downloadBtn.download = 'watermarked-image.png';
+    }
+</script>
+
+</body>
+</html>
